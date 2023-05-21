@@ -2,6 +2,7 @@ import copy
 import logging
 
 import numpy as np
+
 # import torch
 
 
@@ -38,25 +39,31 @@ def PI(vals, p):  # upper-case PI -- product of inputs
     return accum
 
 
-def gen_Lagrange_coeffs(alpha_s, beta_s, p, is_K1=False):
+def gen_Lagrange_coeffs(alpha_s, beta_s, p=None, is_K1=False):
     num_alpha = 1 if is_K1 else len(alpha_s)
-    U = np.zeros((len(beta_s), num_alpha), dtype="int64")
-
-    denom = np.zeros((len(beta_s)), dtype="int64") # prod (beta_i - beta_l)
+    is_analog = np.iscomplexobj(alpha_s) or p is None
+    field_type = "complex128" if is_analog else "int64"
+    U = np.zeros((len(beta_s), num_alpha), dtype=field_type)
+    denom = np.zeros((len(beta_s)), dtype=field_type)  # prod (beta_i - beta_l)
     for i in range(len(beta_s)):
         cur_beta = beta_s[i]
-        den = PI([cur_beta - o for o in beta_s if cur_beta != o], p)
-        denom[i] = den
+        denom_betas = [cur_beta - o for o in beta_s if cur_beta != o]
+        denom[i] = np.prod(denom_betas) if is_analog else PI(denom_betas, p)
 
-    enum = np.zeros((num_alpha), dtype="int64")  # prod (alpha_j - beta_l)
+    enum = np.zeros((num_alpha), dtype=field_type)  # prod (alpha_j - beta_l)
     for j in range(num_alpha):
-        enum[j] = PI([alpha_s[j] - o for o in beta_s], p)
+        enum_alphas = [alpha_s[j] - o for o in beta_s]
+        enum[j] = np.prod(enum_alphas) if is_analog else PI(enum_alphas, p)
 
     for i in range(len(beta_s)):
         for j in range(num_alpha):
-            current_denom = np.mod(np.mod(alpha_s[j] - beta_s[i], p) * denom[i], p)
-            U[i][j] = divmodp(enum[j], current_denom, p) # enum / denom
-    return U.astype("int64")
+            if is_analog:
+                current_denom = (alpha_s[j] - beta_s[i]) * denom[i]
+                U[i][j] = enum[j] / current_denom
+            else:
+                current_denom = np.mod(np.mod(alpha_s[j] - beta_s[i], p) * denom[i], p)
+                U[i][j] = divmodp(enum[j], current_denom, p)  # enum / denom
+    return U.astype(field_type)
 
 
 # def LCC_encoding_with_points(X, alpha_s, beta_s, p):
@@ -77,17 +84,17 @@ def gen_Lagrange_coeffs(alpha_s, beta_s, p, is_K1=False):
 
 
 def quantize(X, q_bit, p):
-    X_int = np.round(X * (2 ** q_bit)).astype("int64")
-    is_negative = (abs(np.sign(X_int)) - np.sign(X_int)) / 2
+    X_int = np.round(X * (2**q_bit)).astype("int64")
+    is_negative = (np.abs(np.sign(X_int)) - np.sign(X_int)) / 2
     out = X_int + p * is_negative
-    return np.mod(out.astype("int64"), p)
+    return out.astype("int64")
 
 
 def dequantize(X_q, q_bit, p):
-    flag = X_q - (p - 1) / 2
-    is_negative = (abs(np.sign(flag)) + np.sign(flag)) / 2
-    X_q = X_q - p * is_negative
-    return X_q.astype(float) / (2 ** q_bit)
+    flag = X_q - (p - 1) // 2
+    is_negative = (np.abs(np.sign(flag)) + np.sign(flag)) / 2
+    X_q_sign = X_q - p * is_negative
+    return X_q_sign.astype("double") / (2**q_bit)
 
 
 # def transform_finite_to_tensor(model_params, p, q_bits):
